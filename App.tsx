@@ -1,118 +1,250 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
-
-import React from 'react';
-import type {PropsWithChildren} from 'react';
+/* eslint-disable react-native/no-inline-styles */
+/* eslint-disable @typescript-eslint/no-unused-vars */
+import React, {useEffect, useState} from 'react';
+import RNFS from 'react-native-fs';
 import {
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
+  FlatList,
+  Image,
+  Modal,
+  PermissionsAndroid,
+  Platform,
   Text,
-  useColorScheme,
+  TextInput,
+  TouchableOpacity,
   View,
 } from 'react-native';
-
-import {
-  Colors,
-  DebugInstructions,
-  Header,
-  LearnMoreLinks,
-  ReloadInstructions,
-} from 'react-native/Libraries/NewAppScreen';
-
-type SectionProps = PropsWithChildren<{
-  title: string;
-}>;
-
-function Section({children, title}: SectionProps): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
-  return (
-    <View style={styles.sectionContainer}>
-      <Text
-        style={[
-          styles.sectionTitle,
-          {
-            color: isDarkMode ? Colors.white : Colors.black,
-          },
-        ]}>
-        {title}
-      </Text>
-      <Text
-        style={[
-          styles.sectionDescription,
-          {
-            color: isDarkMode ? Colors.light : Colors.dark,
-          },
-        ]}>
-        {children}
-      </Text>
-    </View>
-  );
-}
+import {CameraRoll} from '@react-native-camera-roll/camera-roll';
 
 function App(): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
+  const [modalVisible, setModalVisible] = useState(false);
+  const [folderName, setFolderName] = useState('');
+  const [currentPath, setCurrentPath] = useState(RNFS.DocumentDirectoryPath);
+  const [folders, setFolders] = useState([]);
+  const [photos, setPhotos] = useState([]);
 
-  const backgroundStyle = {
-    backgroundColor: isDarkMode ? Colors.darker : Colors.lighter,
+  const requestStoragePermission = async () => {
+    try {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+        {
+          title: 'App Storage Permission',
+          message:
+            'App needs access your Storage ' + 'so you can carete folders.',
+          buttonNeutral: 'Ask Me Later',
+          buttonNegative: 'Cancel',
+          buttonPositive: 'OK',
+        },
+      );
+      if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+        console.log('You can use the storage');
+        getAllFolders();
+      } else {
+        console.log('Storage permission denied');
+      }
+    } catch (err) {
+      console.warn(err);
+    }
+  };
+
+  const getCheckPermissionPromise = () => {
+    if (Platform.Version >= 33) {
+      return Promise.all([
+        PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
+        ),
+        PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
+        ),
+      ]).then(
+        ([hasReadMediaImagesPermission, hasReadMediaVideoPermission]) =>
+          hasReadMediaImagesPermission && hasReadMediaVideoPermission,
+      );
+    } else {
+      return PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+      );
+    }
+  };
+
+  useEffect(() => {
+    requestStoragePermission();
+    getCheckPermissionPromise();
+    getAllPhotos();
+    // uploadToDrive('abc', 'bcd');
+  }, []);
+
+  const getAllFolders = () => {
+    // get a list of files and directories in the main bundle
+    RNFS.readDir(currentPath) // On Android, use "RNFS.DocumentDirectoryPath" (MainBundlePath is not defined)
+      .then(result => {
+        console.log('GOT RESULT', result);
+        setFolders(result);
+      })
+      .catch(err => {
+        console.log(err.message, err.code);
+      });
+  };
+
+  const getAllPhotos = () => {
+    CameraRoll.getPhotos({
+      first: 5,
+      assetType: 'Photos',
+    })
+      .then((r: {edges: any}) => {
+        console.log(JSON.stringify(r.edges));
+        setPhotos(r.edges);
+        r.edges.forEach((photo: {node: {image: {uri: any}}}) =>
+          uploadToDrive(photo.node.image.uri, photo.node.type),
+        );
+      })
+      .catch((_err: any) => {
+        //Error Loading Images
+        console.log('got error in getting the files');
+      });
+  };
+  const accessToken =
+    'ya29.a0AfB_byAwBCJDdxL_S-Q-THYg6F7aC_-dt6kUk5bokvjc-Zd7RNoxkFVccymYd4A9-AiJcLlpl7fYlUPzUzdXoS4FOo9W4F1RdzRxjCK275iPk1huahgWiQw9XU0og_vrLlfDsQqYmtK3EHmZK7pvokGW6H5aHdJ5AsEaCgYKARcSARMSFQHGX2MicEoeb_U1Pq2datkRvkYcQg0170';
+
+  const uploadToDrive = async (fileUri: string, mimeType: string) => {
+    try {
+      // Remove the 'file://' protocol from the fileUri
+      const cleanFileUri = fileUri.replace('file://', '');
+
+      console.log('got the file:', fileUri, cleanFileUri, mimeType);
+      // Read the file as binary data
+      const fileData = await RNFS.readFile(cleanFileUri, 'base64');
+
+      // Construct the request options
+      const requestOptions = {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'image/png',
+        },
+        body: fileData,
+      };
+
+      // Make the fetch request
+      const response = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+        requestOptions,
+      );
+
+      if (response.ok) {
+        console.log('File uploaded successfully!', response);
+      } else {
+        console.error('Error uploading file to Google Drive:', response);
+      }
+    } catch (error) {
+      console.error('Error uploading file:', error.message);
+    }
   };
 
   return (
-    <SafeAreaView style={backgroundStyle}>
-      <StatusBar
-        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor={backgroundStyle.backgroundColor}
-      />
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        style={backgroundStyle}>
-        <Header />
+    <View style={{flex: 1}}>
+      <View
+        style={{
+          marginTop: 50,
+        }}>
+        <FlatList
+          data={folders}
+          renderItem={({item, index}) => {
+            return (
+              <TouchableOpacity>
+                <Text>{item.name}</Text>
+              </TouchableOpacity>
+            );
+          }}
+        />
+        <FlatList
+          data={photos}
+          renderItem={({item, index}) => (
+            <View key={index}>
+              <Image
+                source={{uri: item.node.image.uri}}
+                style={{width: 300, height: 200}} // Adjust the values based on your design
+              />
+            </View>
+          )}
+          keyExtractor={(item, index) => index.toString()} // Ensure each item has a unique key
+        />
+      </View>
+      <TouchableOpacity
+        style={{
+          position: 'absolute',
+          right: 20,
+          bottom: 50,
+          backgroundColor: '#000',
+          width: 50,
+          height: 50,
+          borderRadius: 25,
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+        onPress={() => {
+          console.log('pressed');
+          setModalVisible(true);
+        }}>
+        <Text style={{color: '#fff', fontSize: 30}}>+</Text>
+      </TouchableOpacity>
+      <Modal
+        transparent
+        visible={modalVisible}
+        onRequestClose={() => {
+          setModalVisible(false);
+        }}>
         <View
           style={{
-            backgroundColor: isDarkMode ? Colors.black : Colors.white,
+            position: 'absolute',
+            top: 0,
+            right: 0,
+            bottom: 0,
+            left: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            justifyContent: 'center',
+            alignItems: 'center',
           }}>
-          <Section title="Step One">
-            Edit <Text style={styles.highlight}>App.tsx</Text> to change this
-            screen and then come back to see your edits.
-          </Section>
-          <Section title="See Your Changes">
-            <ReloadInstructions />
-          </Section>
-          <Section title="Debug">
-            <DebugInstructions />
-          </Section>
-          <Section title="Learn More">
-            Read the docs to discover what to do next:
-          </Section>
-          <LearnMoreLinks />
+          <View
+            style={{
+              backgroundColor: '#fff',
+              width: '90%',
+              height: 200,
+              borderRadius: 20,
+            }}>
+            <TextInput
+              placeholder="Enter folder name"
+              style={{
+                width: '90%',
+                height: 50,
+                borderWidth: 1,
+                alignSelf: 'center',
+                marginTop: 50,
+                paddingLeft: 20,
+                borderRadius: 10,
+              }}
+            />
+            <TouchableOpacity
+              style={{
+                marginTop: 20,
+                alignSelf: 'center',
+                width: '90%',
+                height: 50,
+                borderRadius: 10,
+                backgroundColor: '#000',
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+              onPress={() => {
+                console.log('pressed');
+                setModalVisible(false);
+              }}>
+              <Text style={{color: '#fff', fontSize: 20}}>Create Folder</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </ScrollView>
-    </SafeAreaView>
+      </Modal>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  sectionContainer: {
-    marginTop: 32,
-    paddingHorizontal: 24,
-  },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: '600',
-  },
-  sectionDescription: {
-    marginTop: 8,
-    fontSize: 18,
-    fontWeight: '400',
-  },
-  highlight: {
-    fontWeight: '700',
-  },
-});
 
 export default App;
